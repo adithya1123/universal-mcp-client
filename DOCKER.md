@@ -262,4 +262,4 @@ docker system prune -a
 3. Open http://localhost:5173 in your browser
 4. Start chatting with your AI assistant!
 
-For local development without Docker, see [QUICKSTART.md](QUICKSTART.md).
+For local development without Docker, see the "Local Development Setup" section in [README.md](README.md).
