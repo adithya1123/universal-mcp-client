@@ -1,0 +1,328 @@
+"""LangGraph functional API agent orchestration with State management."""
+
+import json
+import logging
+from typing import Any, Dict, List, Optional
+
+from langgraph.func import entrypoint, task
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+from src.llm.azure_openai import AzureOpenAIClient
+from src.mcp.client import MCPClient
+from src.storage.database import DatabaseManager
+from .state import ChatState
+from .checkpointer import create_checkpointer
+
+logger = logging.getLogger(__name__)
+
+
+# Global clients (initialized at startup)
+mcp_client: Optional[MCPClient] = None
+llm_client: Optional[AzureOpenAIClient] = None
+db_manager: Optional[DatabaseManager] = None
+checkpointer: Optional[BaseCheckpointSaver] = None
+chat_agent: Optional[Any] = None  # Will be created after initialization
+
+
+async def initialize_clients(
+    mcp: MCPClient,
+    llm: AzureOpenAIClient,
+    db: Optional[DatabaseManager] = None
+):
+    """
+    Initialize global clients for the agent.
+
+    Args:
+        mcp: MCP client instance
+        llm: Azure OpenAI client instance
+        db: Optional database manager instance
+    """
+    global mcp_client, llm_client, db_manager, checkpointer, chat_agent
+    mcp_client = mcp
+    llm_client = llm
+    db_manager = db
+
+    # Initialize checkpointer if database is available
+    if db_manager:
+        checkpointer = await create_checkpointer()
+        logger.info("PostgreSQL checkpointer initialized")
+    else:
+        checkpointer = None
+        logger.warning("No database provided - checkpointing disabled")
+
+    # Create the entrypoint dynamically with the checkpointer
+    chat_agent = entrypoint(checkpointer=checkpointer)(_chat_agent_impl)
+    logger.info(f"Chat agent entrypoint created (checkpointing: {'enabled' if checkpointer else 'disabled'})")
+
+
+@task
+async def call_llm_task(state: ChatState) -> ChatState:
+    """
+    Task: Call Azure OpenAI with messages and available tools.
+
+    Args:
+        state: Current chat state
+
+    Returns:
+        Updated state with LLM response
+    """
+    if llm_client is None:
+        state["error"] = "LLM client not initialized"
+        return state
+
+    try:
+        response = await llm_client.chat_completion(
+            messages=state["conversation_history"],
+            tools=state["available_tools"] if state["available_tools"] else None,
+            temperature=0.7
+        )
+
+        # Validate response structure
+        if not response or not hasattr(response, 'choices') or not response.choices:
+            logger.error(f"Invalid LLM response structure: {response}")
+            state["error"] = "Invalid response from LLM"
+            return state
+
+        content = response.choices[0].message.content or ""  # Handle None content
+        tool_calls = llm_client.extract_tool_calls(response)
+
+        # Build assistant message
+        assistant_message = {
+            "role": "assistant",
+            "content": content if content else None  # Keep None if no content for OpenAI format
+        }
+
+        # Add tool calls if present
+        if tool_calls:
+            assistant_message["tool_calls"] = [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": tc["arguments"]
+                    }
+                }
+                for tc in tool_calls
+            ]
+
+        # Update state
+        state["conversation_history"].append(assistant_message)
+        state["current_response"] = content
+
+        # Store tool calls for execution
+        if tool_calls:
+            state["tool_calls_made"] = tool_calls
+
+        # Log response (handle empty content)
+        if content:
+            logger.info(f"LLM response: {content[:100]}... (tool_calls: {len(tool_calls)})")
+        else:
+            logger.info(f"LLM made tool calls only (no text content, {len(tool_calls)} tool calls)")
+
+    except Exception as e:
+        logger.error(f"LLM call failed: {e}", exc_info=True)
+        state["error"] = str(e)
+
+    return state
+
+
+@task
+async def execute_tools_task(state: ChatState) -> ChatState:
+    """
+    Task: Execute MCP tools based on LLM's tool calls.
+
+    Args:
+        state: Current chat state
+
+    Returns:
+        Updated state with tool results
+    """
+    if mcp_client is None:
+        state["error"] = "MCP client not initialized"
+        return state
+
+    tool_calls = state.get("tool_calls_made", [])
+    if not tool_calls:
+        return state
+
+    try:
+        for tool_call in tool_calls:
+            # Parse arguments
+            args_dict = json.loads(tool_call["arguments"])
+
+            # Call the tool
+            result = await mcp_client.call_tool(tool_call["name"], args_dict)
+
+            # Convert result to JSON string
+            if hasattr(result, "model_dump"):
+                result_str = json.dumps(result.model_dump())
+            elif hasattr(result, "dict"):
+                result_str = json.dumps(result.dict())
+            else:
+                result_str = str(result)
+
+            # Add tool result to conversation
+            state["conversation_history"].append({
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": result_str
+            })
+
+            logger.info(f"Executed tool: {tool_call['name']}")
+
+        # Clear tool calls after execution
+        state["tool_calls_made"] = []
+
+    except Exception as e:
+        logger.error(f"Tool execution failed: {e}")
+        state["error"] = str(e)
+
+    return state
+
+
+async def _chat_agent_impl(
+    inputs: Dict[str, Any],
+    *,
+    previous: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Main agent entrypoint for processing chat messages with LangGraph.
+
+    This uses LangGraph's @entrypoint decorator with PostgreSQL checkpointing
+    for stateful, resumable workflows.
+
+    Args:
+        inputs: Dict containing user_message and optionally conversation_history
+        previous: Previous saved state from checkpointer (managed by LangGraph)
+
+    Returns:
+        Dict with response, conversation_history, tool_calls_made
+
+    Usage:
+        config = {"configurable": {"thread_id": session_id}}
+        result = await chat_agent.ainvoke({"user_message": "Hello"}, config)
+    """
+    if mcp_client is None or llm_client is None:
+        raise RuntimeError("Clients not initialized. Call initialize_clients() first.")
+
+    # Get user message from inputs
+    user_message = inputs.get("user_message", "")
+
+    # Use previous conversation history if available, otherwise from inputs
+    conversation_history = previous.get("conversation_history", []) if previous else inputs.get("conversation_history", [])
+
+    # Initialize state
+    state: ChatState = {
+        "session_id": inputs.get("session_id", "default"),
+        "user_message": user_message,
+        "conversation_history": conversation_history,
+        "available_tools": [],
+        "current_response": None,
+        "tool_calls_made": [],
+        "iteration": 0,
+        "max_iterations": 10,
+        "error": None,
+    }
+
+    # Clean up any incomplete tool calls from previous failed requests
+    if state["conversation_history"]:
+        last_msg = state["conversation_history"][-1]
+        if last_msg.get("role") == "assistant" and last_msg.get("tool_calls"):
+            state["conversation_history"] = state["conversation_history"][:-1]
+
+    # Add system message if this is the start of conversation
+    if not state["conversation_history"]:
+        state["conversation_history"].append({
+            "role": "system",
+            "content": "You are a helpful AI assistant with access to various tools via MCP servers. Use the available tools when needed to help the user."
+        })
+
+    # Add user message
+    state["conversation_history"].append({
+        "role": "user",
+        "content": state["user_message"]
+    })
+
+    # Get available tools from MCP client
+    state["available_tools"] = mcp_client.get_tools_for_llm()
+
+    # Agent loop - max iterations to prevent infinite loops
+    while state["iteration"] < state["max_iterations"]:
+        state["iteration"] += 1
+
+        # Call LLM
+        state = await call_llm_task(state)
+
+        # Check for errors
+        if state.get("error"):
+            result = {
+                "response": f"I encountered an error: {state['error']}",
+                "conversation_history": state["conversation_history"],
+                "tool_calls_made": [],
+            }
+            return entrypoint.final(value=result, save={"conversation_history": state["conversation_history"]})
+
+        # If no tool calls, we're done
+        if not state.get("tool_calls_made"):
+            result = {
+                "response": state["current_response"] or "I apologize, I couldn't generate a response.",
+                "conversation_history": state["conversation_history"],
+                "tool_calls_made": [],
+            }
+            # Save conversation history for next invocation
+            return entrypoint.final(value=result, save={"conversation_history": state["conversation_history"]})
+
+        # Execute tools
+        state = await execute_tools_task(state)
+
+        # Check for errors
+        if state.get("error"):
+            result = {
+                "response": f"I encountered an error while executing tools: {state['error']}",
+                "conversation_history": state["conversation_history"],
+                "tool_calls_made": [],
+            }
+            return entrypoint.final(value=result, save={"conversation_history": state["conversation_history"]})
+
+        # Continue loop to get final response after tool execution
+
+    # If we hit max iterations
+    logger.warning(f"Agent reached max iterations")
+    final_result = {
+        "response": "I apologize, but I've reached the maximum number of processing steps. Please try rephrasing your request.",
+        "conversation_history": state["conversation_history"],
+        "tool_calls_made": [],
+    }
+
+    # Save conversation history to checkpoint for next invocation
+    return entrypoint.final(
+        value=final_result,
+        save={"conversation_history": state["conversation_history"]}
+    )
+
+
+# Legacy function for backwards compatibility (will be deprecated)
+async def chat_agent_legacy(user_message: str, conversation_history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """
+    Legacy chat agent function for backwards compatibility.
+    Use chat_agent.ainvoke() with config instead.
+
+    Args:
+        user_message: The user's input message
+        conversation_history: Previous conversation messages
+
+    Returns:
+        Dict containing the assistant's response and updated conversation
+    """
+    import uuid
+
+    # Call new function with LangGraph pattern
+    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    result = await chat_agent.ainvoke(
+        {"user_message": user_message, "conversation_history": conversation_history},
+        config=config
+    )
+
+    return result
