@@ -166,3 +166,6 @@ temp/
 # OS-specific files
 Thumbs.db
 .DS_Store
+
+# Node.js dependencies
+node_modules/
