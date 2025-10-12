@@ -1,14 +1,15 @@
 """FastAPI server with WebSocket support for real-time chat and Postgres persistence."""
 
-import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from src.mcp.client import MCPClient
 from src.llm.azure_openai import AzureOpenAIClient
@@ -27,7 +28,7 @@ active_connections: List[WebSocket] = []
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle manager for the FastAPI app."""
+    """Lifecycle manager for the FastAPI app with proper checkpointer management."""
     global mcp_client, llm_client, db_manager
 
     # Startup: Initialize clients
@@ -51,25 +52,46 @@ async def lifespan(app: FastAPI):
         llm_client = AzureOpenAIClient()
         logger.info("✅ Azure OpenAI client initialized")
 
-        # Initialize LangGraph agent with clients
-        await agent_module.initialize_clients(mcp_client, llm_client, db_manager)
-        logger.info("✅ LangGraph agent initialized")
+        # Get database URL for checkpointer
+        db_url = os.getenv("DATABASE_URL", "")
+        if not db_url:
+            logger.warning("DATABASE_URL not set - running without LangGraph checkpointing")
+            # Initialize agent without checkpointer
+            await agent_module.initialize_clients(mcp_client, llm_client, db_manager, checkpointer=None)
+            logger.info("✅ LangGraph agent initialized (no checkpointing)")
+        else:
+            # Convert asyncpg to psycopg format for LangGraph
+            checkpointer_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+            logger.info("Initializing LangGraph PostgreSQL checkpointer...")
 
-        logger.info("✅ All systems ready!")
+            # Use AsyncPostgresSaver with proper context manager
+            async with AsyncPostgresSaver.from_conn_string(checkpointer_url) as checkpointer:
+                # Setup tables (first time only - idempotent operation)
+                await checkpointer.setup()
+                logger.info("✅ PostgreSQL checkpointer initialized and tables created")
+
+                # Initialize LangGraph agent with checkpointer
+                await agent_module.initialize_clients(mcp_client, llm_client, db_manager, checkpointer=checkpointer)
+                logger.info("✅ LangGraph agent initialized with checkpointing")
+
+                logger.info("✅ All systems ready!")
+
+                yield  # Application runs here with active checkpointer
+
+                # Checkpointer cleanup happens automatically on context exit
+                logger.info("🛑 Shutting down checkpointer...")
 
     except Exception as e:
         logger.error(f"Failed to initialize: {e}")
         raise
-
-    yield
-
-    # Shutdown: Clean up
-    logger.info("🛑 Shutting down...")
-    if mcp_client:
-        await mcp_client.close()
-    if db_manager:
-        await db_manager.close()
-    logger.info("✅ Cleanup complete")
+    finally:
+        # Shutdown: Clean up other resources
+        logger.info("🛑 Shutting down remaining resources...")
+        if mcp_client:
+            await mcp_client.close()
+        if db_manager:
+            await db_manager.close()
+        logger.info("✅ Cleanup complete")
 
 
 app = FastAPI(

@@ -1,38 +1,68 @@
 """
-PostgreSQL checkpointer for LangGraph using official AsyncPostgresSaver.
+PostgreSQL checkpointer for LangGraph - DEPRECATED
+
+⚠️ DEPRECATION NOTICE:
+This module is deprecated and should not be used. The checkpointer is now managed
+directly in the FastAPI lifespan context (src/api/server.py) to ensure proper
+resource lifecycle management.
+
+REASON FOR DEPRECATION:
+- AsyncPostgresSaver requires context manager pattern for proper cleanup
+- Connection pool must be managed at application level, not function level
+- Previous implementation created multiple connection pools incorrectly
+
+NEW PATTERN (see src/api/server.py):
+```python
+async with AsyncPostgresSaver.from_conn_string(db_url) as checkpointer:
+    await checkpointer.setup()
+    await initialize_clients(mcp, llm, db, checkpointer=checkpointer)
+    yield  # Application runs
+    # Cleanup happens automatically
+```
+
+This file is kept for reference only and will be removed in a future version.
 """
 
 import logging
-import os
-
-from psycopg_pool import AsyncConnectionPool
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+import warnings
 
 logger = logging.getLogger(__name__)
 
 
+def create_checkpointer():
+    """
+    DEPRECATED: Do not use this function.
+
+    Checkpointer should be created in FastAPI lifespan using:
+    async with AsyncPostgresSaver.from_conn_string(db_url) as checkpointer:
+        await checkpointer.setup()
+    """
+    warnings.warn(
+        "create_checkpointer() is deprecated. "
+        "Manage checkpointer in FastAPI lifespan context instead. "
+        "See src/api/server.py for correct implementation.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    raise RuntimeError(
+        "create_checkpointer() has been deprecated. "
+        "Checkpointer is now managed in FastAPI lifespan (src/api/server.py). "
+        "Do not call this function."
+    )
+
+
+# Previous implementation kept for reference (DO NOT USE):
+"""
+INCORRECT PATTERN (for reference only):
+
 async def create_checkpointer() -> AsyncPostgresSaver:
-    """
-    Create an AsyncPostgresSaver instance using the official LangGraph implementation.
-
-    Returns:
-        AsyncPostgresSaver instance
-
-    Note:
-        Uses DATABASE_URL from environment. The connection string should use
-        psycopg format: postgresql://user:pass@host:port/dbname
-    """
-    # Get database URL from environment
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
         raise ValueError("DATABASE_URL environment variable is required")
 
-    # Convert asyncpg to psycopg format if needed
     if "asyncpg" in db_url:
         db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
-        logger.info("Converted DATABASE_URL from asyncpg to psycopg format")
 
-    # Create connection pool with required settings
     connection_kwargs = {
         "autocommit": True,
         "prepare_threshold": 0,
@@ -44,13 +74,21 @@ async def create_checkpointer() -> AsyncPostgresSaver:
         kwargs=connection_kwargs,
     )
 
-    # Create checkpointer with connection pool (direct instantiation)
     checkpointer = AsyncPostgresSaver(pool)
 
-    # Setup tables using the context manager approach
+    # PROBLEM: Creates ANOTHER pool, doesn't use the one above
     async with AsyncPostgresSaver.from_conn_string(db_url) as setup_checkpointer:
         await setup_checkpointer.setup()
 
-    logger.info("PostgreSQL checkpointer initialized with connection pool")
+    return checkpointer  # Returns checkpointer with DIFFERENT pool
 
-    return checkpointer
+WHY THIS WAS WRONG:
+1. Created two separate connection pools
+2. Context manager pool was closed after setup
+3. Returned checkpointer used orphaned pool
+4. No cleanup mechanism for the returned checkpointer
+5. Connection leaks in production
+
+CORRECT PATTERN:
+See src/api/server.py lifespan function for proper implementation.
+"""
