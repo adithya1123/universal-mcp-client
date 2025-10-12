@@ -16,6 +16,82 @@ from .state import ChatState
 logger = logging.getLogger(__name__)
 
 
+def validate_and_clean_conversation_history(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Validate and clean conversation history to ensure proper OpenAI API format.
+
+    Rules enforced:
+    1. Tool messages must follow assistant messages with tool_calls
+    2. Remove orphaned tool messages (no preceding assistant with tool_calls)
+    3. Remove incomplete assistant messages with tool_calls but no tool responses
+
+    Args:
+        history: Conversation history to validate and clean
+
+    Returns:
+        Cleaned conversation history
+    """
+    if not history:
+        return history
+
+    cleaned = []
+    i = 0
+
+    while i < len(history):
+        msg = history[i]
+        role = msg.get("role")
+
+        if role == "system" or role == "user":
+            # System and user messages are always valid
+            cleaned.append(msg)
+            i += 1
+
+        elif role == "assistant":
+            # Check if this assistant message has tool_calls
+            if msg.get("tool_calls"):
+                # Look ahead to see if there are corresponding tool responses
+                tool_call_ids = {tc["id"] for tc in msg["tool_calls"]}
+                j = i + 1
+                tool_responses = []
+
+                # Collect all immediately following tool messages
+                while j < len(history) and history[j].get("role") == "tool":
+                    tool_msg = history[j]
+                    if tool_msg.get("tool_call_id") in tool_call_ids:
+                        tool_responses.append(tool_msg)
+                        tool_call_ids.discard(tool_msg["tool_call_id"])
+                    j += 1
+
+                # Only include if we have ALL tool responses
+                if not tool_call_ids:  # All tool calls have responses
+                    cleaned.append(msg)
+                    cleaned.extend(tool_responses)
+                    i = j
+                else:
+                    # Incomplete tool interaction - skip
+                    logger.warning(f"Removing incomplete tool interaction: missing responses for {tool_call_ids}")
+                    i = j
+            else:
+                # Regular assistant message without tool calls
+                cleaned.append(msg)
+                i += 1
+
+        elif role == "tool":
+            # Orphaned tool message (should have been handled in assistant block)
+            logger.warning(f"Removing orphaned tool message: {msg.get('tool_call_id')}")
+            i += 1
+
+        else:
+            # Unknown role - skip
+            logger.warning(f"Removing message with unknown role: {role}")
+            i += 1
+
+    if len(cleaned) != len(history):
+        logger.info(f"Cleaned conversation history: {len(history)} -> {len(cleaned)} messages")
+
+    return cleaned
+
+
 def truncate_conversation_history(history: List[Dict[str, Any]], max_messages: int = 20) -> List[Dict[str, Any]]:
     """
     Truncate conversation history to reduce token usage.
@@ -113,10 +189,13 @@ async def call_llm_task(state: ChatState) -> ChatState:
         return state
 
     try:
+        # Validate and clean conversation history first
+        validated_history = validate_and_clean_conversation_history(state["conversation_history"])
+
         # Truncate conversation history to reduce token usage
         max_history_messages = int(os.getenv("MAX_CONVERSATION_HISTORY_MESSAGES", "20"))
         truncated_history = truncate_conversation_history(
-            state["conversation_history"],
+            validated_history,
             max_messages=max_history_messages
         )
 
@@ -271,6 +350,10 @@ async def _chat_agent_impl(
     # Use previous conversation history if available, otherwise from inputs
     conversation_history = previous.get("conversation_history", []) if previous else inputs.get("conversation_history", [])
 
+    # Validate and clean conversation history to prevent API errors
+    # This removes orphaned tool messages and incomplete tool interactions
+    conversation_history = validate_and_clean_conversation_history(conversation_history)
+
     # Initialize state
     state: ChatState = {
         "session_id": inputs.get("session_id", "default"),
@@ -283,12 +366,6 @@ async def _chat_agent_impl(
         "max_iterations": 10,
         "error": None,
     }
-
-    # Clean up any incomplete tool calls from previous failed requests
-    if state["conversation_history"]:
-        last_msg = state["conversation_history"][-1]
-        if last_msg.get("role") == "assistant" and last_msg.get("tool_calls"):
-            state["conversation_history"] = state["conversation_history"][:-1]
 
     # Add system message if this is the start of conversation
     if not state["conversation_history"]:
