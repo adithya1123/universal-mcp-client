@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from langgraph.func import entrypoint, task
@@ -17,12 +18,46 @@ from .checkpointer import create_checkpointer
 logger = logging.getLogger(__name__)
 
 
+def truncate_conversation_history(history: List[Dict[str, Any]], max_messages: int = 20) -> List[Dict[str, Any]]:
+    """
+    Truncate conversation history to reduce token usage.
+    Keeps the system message and the most recent messages.
+
+    Args:
+        history: Full conversation history
+        max_messages: Maximum number of messages to keep
+
+    Returns:
+        Truncated conversation history
+    """
+    if not history or len(history) <= max_messages:
+        return history
+
+    # Always keep system message if present
+    system_messages = [msg for msg in history if msg.get("role") == "system"]
+    other_messages = [msg for msg in history if msg.get("role") != "system"]
+
+    # Keep most recent messages
+    recent_messages = other_messages[-(max_messages - len(system_messages)):]
+
+    truncated = system_messages + recent_messages
+
+    if len(history) > len(truncated):
+        logger.info(f"Truncated conversation history from {len(history)} to {len(truncated)} messages")
+
+    return truncated
+
+
 # Global clients (initialized at startup)
 mcp_client: Optional[MCPClient] = None
 llm_client: Optional[AzureOpenAIClient] = None
 db_manager: Optional[DatabaseManager] = None
 checkpointer: Optional[BaseCheckpointSaver] = None
 chat_agent: Optional[Any] = None  # Will be created after initialization
+
+# Throttling: Limit concurrent API calls to prevent burst patterns
+import asyncio
+_api_call_semaphore: Optional[asyncio.Semaphore] = None
 
 
 async def initialize_clients(
@@ -38,10 +73,15 @@ async def initialize_clients(
         llm: Azure OpenAI client instance
         db: Optional database manager instance
     """
-    global mcp_client, llm_client, db_manager, checkpointer, chat_agent
+    global mcp_client, llm_client, db_manager, checkpointer, chat_agent, _api_call_semaphore
     mcp_client = mcp
     llm_client = llm
     db_manager = db
+
+    # Initialize API call semaphore to limit concurrent requests
+    # Limit to 2 concurrent API calls to prevent burst patterns
+    _api_call_semaphore = asyncio.Semaphore(2)
+    logger.info("API call throttling initialized (max 2 concurrent requests)")
 
     # Initialize checkpointer if database is available
     if db_manager:
@@ -72,11 +112,28 @@ async def call_llm_task(state: ChatState) -> ChatState:
         return state
 
     try:
-        response = await llm_client.chat_completion(
-            messages=state["conversation_history"],
-            tools=state["available_tools"] if state["available_tools"] else None,
-            temperature=0.7
+        # Truncate conversation history to reduce token usage
+        max_history_messages = int(os.getenv("MAX_CONVERSATION_HISTORY_MESSAGES", "20"))
+        truncated_history = truncate_conversation_history(
+            state["conversation_history"],
+            max_messages=max_history_messages
         )
+
+        # Use semaphore to throttle concurrent API calls
+        if _api_call_semaphore:
+            async with _api_call_semaphore:
+                response = await llm_client.chat_completion(
+                    messages=truncated_history,
+                    tools=state["available_tools"] if state["available_tools"] else None,
+                    temperature=0.7
+                )
+        else:
+            # Fallback if semaphore not initialized
+            response = await llm_client.chat_completion(
+                messages=truncated_history,
+                tools=state["available_tools"] if state["available_tools"] else None,
+                temperature=0.7
+            )
 
         # Validate response structure
         if not response or not hasattr(response, 'choices') or not response.choices:
