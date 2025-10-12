@@ -18,6 +18,8 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "python-dotenv>=1.1.1",
     "sqlalchemy>=2.0.44",
+    "tenacity>=9.0.0",
+    "tiktoken>=0.8.0",
     "uvicorn>=0.37.0",
     "websockets>=15.0.1",
 ]

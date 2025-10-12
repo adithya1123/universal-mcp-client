@@ -36,16 +36,37 @@ Before implementing or modifying any code, **ALWAYS** reference these local docu
 
 If local documentation doesn't cover your specific use case:
 
-1. **Use WebSearch tool** to find official documentation
-2. **Use WebFetch tool** to read official docs pages
-3. **Verify against official sources**:
+1. **FIRST: Use Ref MCP Server** (if available)
+   - Use `mcp__Ref__ref_search_documentation` to search for latest official documentation
+   - Use `mcp__Ref__ref_read_url` to read the exact documentation pages
+   - This is the PREFERRED method for getting up-to-date, accurate documentation
+   - Prevents hallucination and outdated code patterns
+   - Example: Search "LangGraph functional API entrypoint decorator" or "FastAPI async dependency injection"
+
+2. **SECOND: Use Exa MCP Server** for real-time code examples and technical discussions
+   - **Tool**: `mcp__exa__get_code_context_exa`
+     - Best for: Finding up-to-date code snippets and implementation patterns
+     - Returns: Actual code examples from GitHub, official docs, and technical blogs
+     - Use when: You need current API usage patterns or solving complex implementation problems
+     - Example: "LangGraph functional API state management examples"
+   - **Tool**: `mcp__exa__web_search_exa`
+     - Best for: Finding recent tutorials, blog posts, and technical discussions
+     - Use when: Researching new technologies or rapidly evolving frameworks
+     - Returns: Full article content with metadata
+   - **Key advantage**: Provides the most current technical information, crucial for avoiding outdated code
+
+3. **FALLBACK: Use WebSearch/WebFetch tools** if Ref/Exa MCP are unavailable
+   - Use WebSearch tool to find official documentation
+   - Use WebFetch tool to read official docs pages
+
+4. **Verify against official sources**:
    - LangGraph: https://langchain-ai.github.io/langgraph/
    - MCP: https://modelcontextprotocol.io/
    - FastAPI: https://fastapi.tiangolo.com/
    - SQLAlchemy: https://docs.sqlalchemy.org/
 
-4. **DO NOT guess or assume** - Always verify with official docs
-5. **Update local docs** after learning new patterns
+5. **DO NOT guess or assume** - Always verify with official docs via Ref/Exa MCP or WebFetch
+6. **Update local docs** after learning new patterns
 
 ### Code Accuracy Rules
 
@@ -55,13 +76,20 @@ If local documentation doesn't cover your specific use case:
 - Guess decorator parameters
 - Make up configuration options
 - Skip documentation verification
+- **Write code from memory - ALWAYS verify with Ref MCP or official docs first**
+- **Hallucinate API methods or parameters - use Ref MCP to check**
 
 ✅ **ALWAYS:**
 - Check local docs first
-- Search official docs when unsure
-- Verify patterns with WebFetch
+- **Use Ref MCP server (`mcp__Ref__ref_search_documentation`) for latest documentation**
+- **Read documentation with Ref MCP (`mcp__Ref__ref_read_url`) before implementing**
+- **Use Exa MCP (`mcp__exa__get_code_context_exa`) for current code examples and implementation patterns**
+- **Use Exa MCP (`mcp__exa__web_search_exa`) for recent tutorials and technical discussions**
+- Search official docs when Ref/Exa MCP are unavailable
+- Verify patterns with WebFetch as fallback
 - Test with small examples
 - Update documentation after learning
+- **When in doubt, look it up - never guess**
 
 ### Example Workflow
 
@@ -69,14 +97,29 @@ If local documentation doesn't cover your specific use case:
 1. Open `docs/LANGGRAPH_FUNCTIONAL_API.md`
 2. Find relevant example
 3. Copy the pattern exactly
-4. If pattern not found, use WebSearch/WebFetch
+4. If pattern not found:
+   - **FIRST**: Use `mcp__Ref__ref_search_documentation` with query like "LangGraph functional API [specific feature]"
+   - **THEN**: Use `mcp__Ref__ref_read_url` to read the official documentation
+   - **ALSO**: Use `mcp__exa__get_code_context_exa` for current code examples if needed
+   - **FALLBACK**: Use WebSearch/WebFetch if Ref/Exa MCP unavailable
 5. Implement based on verified pattern
 
 **Before writing MCP code:**
 1. Open `docs/MCP_PROTOCOL.md`
 2. Review architecture and patterns
 3. Check implementation examples
-4. Follow established conventions
+4. If unclear:
+   - Use Ref MCP to search "MCP protocol [specific topic]"
+   - Use Exa MCP for recent implementation examples
+5. Follow established conventions
+
+**Before writing FastAPI/SQLAlchemy/other library code:**
+1. Check if pattern exists in existing codebase
+2. If not:
+   - Use `mcp__Ref__ref_search_documentation` to find latest official docs
+   - Read the documentation with `mcp__Ref__ref_read_url`
+   - Use `mcp__exa__get_code_context_exa` for current usage patterns
+3. Implement using verified, up-to-date patterns
 
 **Before modifying existing code:**
 1. Open `docs/IMPLEMENTATION_REFERENCE.md`
