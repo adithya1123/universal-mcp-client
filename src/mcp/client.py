@@ -4,25 +4,24 @@ import json
 from typing import Any, Dict, List
 from pathlib import Path
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession
+
+from .transports import TransportFactory, MCPTransport
 
 
 class MCPClient:
     """Universal MCP client that can connect to multiple MCP servers.
 
-    Uses direct context manager entry to keep connections alive for the
-    application lifetime. The contexts must be managed properly to avoid
-    the 'Attempted to exit cancel scope in a different task' error.
+    Supports multiple transport types (STDIO, HTTP) through a unified
+    transport abstraction layer.
     """
 
     def __init__(self, config_path: str = "config/mcp_servers.json"):
         self.config_path = Path(config_path)
         self.servers: Dict[str, ClientSession] = {}
         self.tools: Dict[str, Dict[str, Any]] = {}
-        # Store context managers for proper cleanup
-        self._stdio_cms: Dict[str, Any] = {}
-        self._session_cms: Dict[str, Any] = {}
+        # Store transport instances for proper lifecycle management
+        self._transports: Dict[str, MCPTransport] = {}
 
     async def load_servers(self) -> None:
         """Load and connect to MCP servers from configuration."""
@@ -34,32 +33,21 @@ class MCPClient:
                 await self.connect_server(server_config)
 
     async def connect_server(self, server_config: Dict[str, Any]) -> None:
-        """Connect to a single MCP server.
+        """Connect to a single MCP server using appropriate transport.
 
-        Uses manual __aenter__() to keep connections alive. The contexts
-        will be cleaned up properly in close() using __aexit__().
+        Args:
+            server_config: Server configuration with transport type and parameters
         """
         name = server_config["name"]
+        transport_type = server_config.get("transport", "stdio")
 
-        if server_config["transport"] == "stdio":
-            server_params = StdioServerParameters(
-                command=server_config["command"],
-                args=server_config.get("args", []),
-                env=server_config.get("env")
-            )
+        try:
+            # Create appropriate transport using factory
+            transport = TransportFactory.create(name, server_config)
+            self._transports[name] = transport
 
-            # Enter stdio_client context manager
-            stdio_cm = stdio_client(server_params)
-            read_stream, write_stream = await stdio_cm.__aenter__()
-            self._stdio_cms[name] = stdio_cm
-
-            # Enter ClientSession context manager
-            session_cm = ClientSession(read_stream, write_stream)
-            session = await session_cm.__aenter__()
-            self._session_cms[name] = session_cm
-
-            # Initialize the connection
-            await session.initialize()
+            # Connect and get initialized session
+            session = await transport.connect()
 
             # Store the active session
             self.servers[name] = session
@@ -67,7 +55,18 @@ class MCPClient:
             # Discover and store tools
             await self.discover_tools(name, session)
 
-            print(f"✓ Connected to MCP server: {name}")
+            print(f"✓ Connected to MCP server: {name} ({transport_type})")
+
+        except Exception as e:
+            print(f"✗ Failed to connect to {name} ({transport_type}): {e}")
+            # Clean up partial connection if any
+            if name in self._transports:
+                try:
+                    await self._transports[name].disconnect()
+                except Exception:
+                    pass
+                del self._transports[name]
+            raise
 
     async def discover_tools(self, server_name: str, session: ClientSession) -> None:
         """Discover available tools from an MCP server."""
@@ -118,37 +117,55 @@ class MCPClient:
         return llm_tools
 
     async def close(self) -> None:
-        """Close all MCP server connections.
-
-        NOTE: Due to anyio's cancel scope restrictions, cleanup errors may occur
-        if this is called from a different task than initialization. These errors
-        are suppressed as the process/container shutdown will clean up resources.
-        """
+        """Close all MCP server connections and cleanup resources."""
         print("🛑 Closing MCP connections...")
 
         for name in list(self.servers.keys()):
-            # Exit session context first
-            if name in self._session_cms:
+            # Disconnect transport
+            if name in self._transports:
                 try:
-                    await self._session_cms[name].__aexit__(None, None, None)
-                except Exception:
-                    # Suppress anyio cancel scope errors - resources will be cleaned
-                    # up by process termination anyway
-                    pass
+                    await self._transports[name].disconnect()
+                except Exception as e:
+                    print(f"  Warning: Error disconnecting {name}: {e}")
                 finally:
-                    del self._session_cms[name]
-
-            # Exit stdio context second
-            if name in self._stdio_cms:
-                try:
-                    await self._stdio_cms[name].__aexit__(None, None, None)
-                except Exception:
-                    # Suppress anyio cancel scope errors
-                    pass
-                finally:
-                    del self._stdio_cms[name]
+                    del self._transports[name]
 
             # Remove from servers
             self.servers.pop(name, None)
 
         print("✓ MCP client cleanup completed")
+
+    async def health_check_all(self) -> Dict[str, bool]:
+        """Check health status of all connected servers.
+
+        Returns:
+            Dict[str, bool]: Map of server name to health status
+        """
+        results = {}
+        for name, transport in self._transports.items():
+            try:
+                results[name] = await transport.health_check()
+            except Exception:
+                results[name] = False
+        return results
+
+    def get_server_info(self) -> List[Dict[str, Any]]:
+        """Get information about all connected servers.
+
+        Returns:
+            List[Dict]: List of server information dictionaries
+        """
+        servers_info = []
+        for name, transport in self._transports.items():
+            server_tools = [
+                tool_key for tool_key in self.tools.keys()
+                if self.tools[tool_key]["server"] == name
+            ]
+            servers_info.append({
+                "name": name,
+                "transport": transport.config.get("transport", "stdio"),
+                "connected": transport.is_connected,
+                "tool_count": len(server_tools),
+                "tools": server_tools
+            })
+        return servers_info

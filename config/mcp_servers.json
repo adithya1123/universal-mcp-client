@@ -30,7 +30,14 @@
         "run",
         "weather.py"],
       "enabled": false
+    },
+    {
+      "name": "exa",
+      "description": "Exa AI search MCP server",
+      "transport": "http",
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": {},
+      "enabled": true
     }
-    
   ]
 }
