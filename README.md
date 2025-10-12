@@ -87,8 +87,8 @@ AZURE_OPENAI_API_KEY=your-api-key-here
 AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
 AZURE_OPENAI_API_VERSION=2025-01-01-preview
 
-# Database (Docker default - no changes needed)
-DATABASE_URL=postgresql+asyncpg://mcp_user:mcp_pass@postgres:5432/mcp_chat
+# Database (Docker default - change credentials in docker-compose.yml)
+DATABASE_URL=postgresql+asyncpg://db_user:db_password@postgres:5432/mcp_chat
 ```
 
 ### 2. Start All Services
@@ -139,8 +139,8 @@ curl http://localhost:8000/health
 # Start PostgreSQL (or use Docker)
 docker run -d \
   --name postgres \
-  -e POSTGRES_USER=mcp_user \
-  -e POSTGRES_PASSWORD=mcp_pass \
+  -e POSTGRES_USER=your_db_user \
+  -e POSTGRES_PASSWORD=your_secure_password \
   -e POSTGRES_DB=mcp_chat \
   -p 5432:5432 \
   postgres:15-alpine
@@ -194,7 +194,7 @@ Configure MCP servers in `config/mcp_servers.json`:
       "args": [
         "-y",
         "@modelcontextprotocol/server-postgres",
-        "postgresql+asyncpg://mcp_user:mcp_pass@postgres:5432/mcp_chat"
+        "postgresql+asyncpg://db_user:db_password@postgres:5432/mcp_chat"
       ],
       "enabled": true
     }
@@ -369,10 +369,10 @@ docker-compose down -v
 
 ```bash
 # For Docker: Use service name 'postgres' not 'localhost'
-DATABASE_URL=postgresql+asyncpg://mcp_user:mcp_pass@postgres:5432/mcp_chat
+DATABASE_URL=postgresql+asyncpg://db_user:db_password@postgres:5432/mcp_chat
 
 # For local dev: Use localhost
-DATABASE_URL=postgresql+asyncpg://mcp_user:mcp_pass@localhost:5432/mcp_chat
+DATABASE_URL=postgresql+asyncpg://db_user:db_password@localhost:5432/mcp_chat
 ```
 
 ### MCP Server Connection Failures
