@@ -7,13 +7,11 @@ from typing import Any, Dict, List, Optional
 
 from langgraph.func import entrypoint, task
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from src.llm.azure_openai import AzureOpenAIClient
 from src.mcp.client import MCPClient
 from src.storage.database import DatabaseManager
 from .state import ChatState
-from .checkpointer import create_checkpointer
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +50,6 @@ def truncate_conversation_history(history: List[Dict[str, Any]], max_messages: i
 mcp_client: Optional[MCPClient] = None
 llm_client: Optional[AzureOpenAIClient] = None
 db_manager: Optional[DatabaseManager] = None
-checkpointer: Optional[BaseCheckpointSaver] = None
 chat_agent: Optional[Any] = None  # Will be created after initialization
 
 # Throttling: Limit concurrent API calls to prevent burst patterns
@@ -63,7 +60,8 @@ _api_call_semaphore: Optional[asyncio.Semaphore] = None
 async def initialize_clients(
     mcp: MCPClient,
     llm: AzureOpenAIClient,
-    db: Optional[DatabaseManager] = None
+    db: Optional[DatabaseManager] = None,
+    checkpointer: Optional[BaseCheckpointSaver] = None
 ):
     """
     Initialize global clients for the agent.
@@ -72,8 +70,13 @@ async def initialize_clients(
         mcp: MCP client instance
         llm: Azure OpenAI client instance
         db: Optional database manager instance
+        checkpointer: Optional checkpointer instance (managed by FastAPI lifespan)
+
+    Note:
+        The checkpointer should be managed by the FastAPI lifespan context manager
+        to ensure proper resource cleanup. Do not create checkpointer here.
     """
-    global mcp_client, llm_client, db_manager, checkpointer, chat_agent, _api_call_semaphore
+    global mcp_client, llm_client, db_manager, chat_agent, _api_call_semaphore
     mcp_client = mcp
     llm_client = llm
     db_manager = db
@@ -83,15 +86,13 @@ async def initialize_clients(
     _api_call_semaphore = asyncio.Semaphore(2)
     logger.info("API call throttling initialized (max 2 concurrent requests)")
 
-    # Initialize checkpointer if database is available
-    if db_manager:
-        checkpointer = await create_checkpointer()
-        logger.info("PostgreSQL checkpointer initialized")
+    # Use provided checkpointer (managed by FastAPI lifespan)
+    if checkpointer:
+        logger.info("Using provided PostgreSQL checkpointer (managed by FastAPI lifespan)")
     else:
-        checkpointer = None
-        logger.warning("No database provided - checkpointing disabled")
+        logger.warning("No checkpointer provided - LangGraph persistence disabled")
 
-    # Create the entrypoint dynamically with the checkpointer
+    # Create the @entrypoint dynamically with the checkpointer
     chat_agent = entrypoint(checkpointer=checkpointer)(_chat_agent_impl)
     logger.info(f"Chat agent entrypoint created (checkpointing: {'enabled' if checkpointer else 'disabled'})")
 
