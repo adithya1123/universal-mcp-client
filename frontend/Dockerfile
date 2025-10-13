@@ -3,9 +3,6 @@
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
-# Create a non-root user and set it as the running user
-RUN groupadd -r myappgroup && useradd --no-log-init -r -g myappgroup myappuser
-
 WORKDIR /app
 
 # Copy package files
@@ -29,15 +26,23 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Expose port
-EXPOSE 80
+# Set proper permissions for nginx user (which already exists in the image)
+RUN chown -R nginx:nginx /usr/share/nginx/html && \
+    chown -R nginx:nginx /var/cache/nginx && \
+    chown -R nginx:nginx /var/log/nginx && \
+    chown -R nginx:nginx /etc/nginx/conf.d && \
+    touch /var/run/nginx.pid && \
+    chown -R nginx:nginx /var/run/nginx.pid
 
-# Health check
+# Expose port (using 8080 as non-root can't bind to port 80)
+EXPOSE 8080
+
+# Health check (updated to port 8080)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --quiet --tries=1 --spider http://localhost:80 || exit 1
+    CMD wget --quiet --tries=1 --spider http://localhost:8080 || exit 1
 
-# Switch to non-root user
-USER myappuser
+# Switch to non-root user (nginx user already exists in nginx:alpine)
+USER nginx
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
