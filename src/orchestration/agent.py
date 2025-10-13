@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, AsyncGenerator
 
 from langgraph.func import entrypoint, task
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -461,3 +461,224 @@ async def chat_agent_legacy(user_message: str, conversation_history: Optional[Li
     )
 
     return result
+
+
+async def chat_agent_stream(
+    user_message: str,
+    session_id: str,
+    conversation_history: Optional[List[Dict[str, Any]]] = None
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """
+    Streaming version of chat agent that yields events in real-time.
+
+    Yields events for:
+    - Agent thinking/processing
+    - Tool execution start/end
+    - LLM token streaming
+    - Final response
+
+    Args:
+        user_message: The user's input message
+        session_id: Session identifier for checkpointing
+        conversation_history: Previous conversation messages
+
+    Yields:
+        Dict events with type and data for streaming to client
+    """
+    if mcp_client is None or llm_client is None:
+        yield {"type": "error", "data": "Clients not initialized"}
+        return
+
+    try:
+        # Validate and clean conversation history
+        if conversation_history:
+            conversation_history = validate_and_clean_conversation_history(conversation_history)
+        else:
+            conversation_history = []
+
+        # Initialize state
+        state: ChatState = {
+            "session_id": session_id,
+            "user_message": user_message,
+            "conversation_history": conversation_history.copy(),
+            "available_tools": [],
+            "current_response": None,
+            "tool_calls_made": [],
+            "iteration": 0,
+            "max_iterations": 10,
+            "error": None,
+        }
+
+        # Add system message if this is the start of conversation
+        if not state["conversation_history"]:
+            state["conversation_history"].append({
+                "role": "system",
+                "content": "You are a helpful AI assistant with access to various tools via MCP servers. Use the available tools when needed to help the user."
+            })
+
+        # Add user message
+        state["conversation_history"].append({
+            "role": "user",
+            "content": state["user_message"]
+        })
+
+        # Get available tools from MCP client
+        state["available_tools"] = mcp_client.get_tools_for_llm()
+
+        # Yield initial status
+        yield {
+            "type": "status",
+            "data": {"message": "Processing your request...", "iteration": 0}
+        }
+
+        # Agent loop
+        while state["iteration"] < state["max_iterations"]:
+            state["iteration"] += 1
+
+            yield {
+                "type": "status",
+                "data": {"message": f"Thinking... (step {state['iteration']})", "iteration": state["iteration"]}
+            }
+
+            # Call LLM with streaming
+            validated_history = validate_and_clean_conversation_history(state["conversation_history"])
+            max_history_messages = int(os.getenv("MAX_CONVERSATION_HISTORY_MESSAGES", "20"))
+            truncated_history = truncate_conversation_history(validated_history, max_messages=max_history_messages)
+
+            # Stream LLM response
+            if _api_call_semaphore:
+                async with _api_call_semaphore:
+                    response = await llm_client.chat_completion(
+                        messages=truncated_history,
+                        tools=state["available_tools"] if state["available_tools"] else None,
+                        temperature=0.7
+                    )
+            else:
+                response = await llm_client.chat_completion(
+                    messages=truncated_history,
+                    tools=state["available_tools"] if state["available_tools"] else None,
+                    temperature=0.7
+                )
+
+            # Extract response
+            if not response or not hasattr(response, 'choices') or not response.choices:
+                yield {"type": "error", "data": "Invalid response from LLM"}
+                return
+
+            content = response.choices[0].message.content or ""
+            tool_calls = llm_client.extract_tool_calls(response)
+
+            # Yield LLM response content
+            if content:
+                yield {
+                    "type": "llm_response",
+                    "data": {"content": content, "has_tool_calls": len(tool_calls) > 0}
+                }
+
+            # Build assistant message
+            assistant_message = {
+                "role": "assistant",
+                "content": content if content else None
+            }
+
+            if tool_calls:
+                assistant_message["tool_calls"] = [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": tc["arguments"]
+                        }
+                    }
+                    for tc in tool_calls
+                ]
+
+            state["conversation_history"].append(assistant_message)
+            state["current_response"] = content
+
+            # If no tool calls, we're done
+            if not tool_calls:
+                # Save to database if available
+                if db_manager:
+                    await db_manager.save_message(session_id=session_id, role="user", content=user_message)
+                    await db_manager.save_message(session_id=session_id, role="assistant", content=content)
+
+                yield {
+                    "type": "complete",
+                    "data": {
+                        "response": content or "I apologize, I couldn't generate a response.",
+                        "conversation_history": state["conversation_history"]
+                    }
+                }
+                return
+
+            # Execute tools
+            state["tool_calls_made"] = tool_calls
+
+            for tool_call in tool_calls:
+                yield {
+                    "type": "tool_start",
+                    "data": {
+                        "tool_name": tool_call["name"],
+                        "tool_id": tool_call["id"],
+                        "arguments": tool_call["arguments"]
+                    }
+                }
+
+                try:
+                    # Parse arguments
+                    args_dict = json.loads(tool_call["arguments"])
+
+                    # Call the tool
+                    result = await mcp_client.call_tool(tool_call["name"], args_dict)
+
+                    # Convert result to JSON string
+                    if hasattr(result, "model_dump"):
+                        result_str = json.dumps(result.model_dump())
+                    elif hasattr(result, "dict"):
+                        result_str = json.dumps(result.dict())
+                    else:
+                        result_str = str(result)
+
+                    # Add tool result to conversation
+                    state["conversation_history"].append({
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": result_str
+                    })
+
+                    yield {
+                        "type": "tool_end",
+                        "data": {
+                            "tool_name": tool_call["name"],
+                            "tool_id": tool_call["id"],
+                            "result": result_str[:500]  # Truncate for display
+                        }
+                    }
+
+                except Exception as e:
+                    logger.error(f"Tool execution failed: {e}")
+                    yield {
+                        "type": "tool_error",
+                        "data": {
+                            "tool_name": tool_call["name"],
+                            "tool_id": tool_call["id"],
+                            "error": str(e)
+                        }
+                    }
+
+            # Clear tool calls after execution
+            state["tool_calls_made"] = []
+
+            # Continue loop to get final response after tool execution
+
+        # If we hit max iterations
+        yield {
+            "type": "error",
+            "data": "Reached maximum number of processing steps. Please try rephrasing your request."
+        }
+
+    except Exception as e:
+        logger.error(f"Streaming agent error: {e}", exc_info=True)
+        yield {"type": "error", "data": str(e)}

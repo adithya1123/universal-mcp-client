@@ -8,6 +8,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -202,6 +203,45 @@ async def chat(message: ChatMessage):
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat/stream")
+async def chat_stream(message: ChatMessage):
+    """Process a chat message with Server-Sent Events (SSE) streaming."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    session_id = message.session_id
+
+    async def event_generator():
+        """Generate SSE events from the streaming agent."""
+        try:
+            # Get conversation history from database
+            conversation_history = await db_manager.get_conversation_history(session_id)
+
+            # Stream events from agent
+            async for event in agent_module.chat_agent_stream(
+                user_message=message.message,
+                session_id=session_id,
+                conversation_history=conversation_history
+            ):
+                # Format as SSE
+                yield f"data: {json.dumps(event)}\n\n"
+
+        except Exception as e:
+            logger.error(f"Streaming error: {e}", exc_info=True)
+            error_event = {"type": "error", "data": str(e)}
+            yield f"data: {json.dumps(error_event)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
 
 
 @app.post("/chat/reset")
