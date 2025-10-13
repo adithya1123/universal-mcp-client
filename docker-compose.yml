@@ -32,6 +32,7 @@ services:
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
       - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME}
       - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION}
+      - ALLOWED_ORIGINS=http://localhost:5173,http://frontend:8080
       - DEBUG=false
       - LOG_LEVEL=INFO
     ports:
@@ -59,11 +60,11 @@ services:
       dockerfile: Dockerfile
     container_name: mcp-frontend
     ports:
-      - "5173:80"
+      - "5173:8080"
     depends_on:
       - backend
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080"]
       interval: 30s
       timeout: 10s
       retries: 3
