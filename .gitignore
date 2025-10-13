@@ -83,6 +83,9 @@ ipython_config.py
 # pyenv
 .python-version
 
+# json
+*.json
+
 # pipenv
 Pipfile.lock
 
@@ -112,6 +115,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+*.json
 
 # Spyder project settings
 .spyderproject
