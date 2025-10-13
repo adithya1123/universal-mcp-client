@@ -4,7 +4,8 @@ A production-ready web-based AI chat assistant that acts as a universal MCP (Mod
 
 ## Features
 
-- **Universal MCP Client**: Connect to multiple MCP servers simultaneously (STDIO transport)
+- **Universal MCP Client**: Connect to multiple MCP servers simultaneously (STDIO and HTTP transports)
+- **Multi-Transport Support**: Support for both local STDIO servers and remote HTTP servers
 - **Agentic Workflows**: LangGraph Functional API with @entrypoint decorators and PostgreSQL checkpointing
 - **Persistent Conversations**: PostgreSQL-backed chat history and state management
 - **Real-time Chat**: WebSocket and REST API endpoints
@@ -173,7 +174,9 @@ The frontend will be available at http://localhost:5173
 
 ## MCP Server Configuration
 
-Configure MCP servers in `config/mcp_servers.json`:
+Configure MCP servers in `config/mcp_servers.json`. The client supports both **STDIO** (local) and **HTTP** (remote) transports:
+
+### STDIO Transport (Local Servers)
 
 ```json
 {
@@ -202,7 +205,37 @@ Configure MCP servers in `config/mcp_servers.json`:
 }
 ```
 
-**Note for Docker:** Use service name `postgres` instead of `localhost` in connection strings.
+### HTTP Transport (Remote Servers)
+
+```json
+{
+  "servers": [
+    {
+      "name": "exa-code",
+      "description": "Fast, efficient web context for coding agents",
+      "transport": "http",
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      },
+      "enabled": true
+    },
+    {
+      "name": "weather-api",
+      "description": "Weather data MCP server",
+      "transport": "http",
+      "url": "http://localhost:8123/mcp",
+      "headers": {},
+      "enabled": true
+    }
+  ]
+}
+```
+
+**Notes:**
+- For Docker: Use service name `postgres` instead of `localhost` in STDIO server connection strings
+- HTTP transport supports both local and remote servers
+- Optional `headers` field for authentication (Bearer tokens, API keys, etc.)
 
 ## API Endpoints
 
@@ -270,11 +303,13 @@ universal-mcp-client/
 
 ## Current Status
 
-### ✅ Completed (Phase 1 & 2)
+### ✅ Completed (Phase 1, 2 & 3A)
 
 - [x] Project setup with UV package manager
 - [x] MCP client with STDIO transport
-- [x] Multi-server MCP support (filesystem, PostgreSQL)
+- [x] **HTTP transport support (Streamable HTTP)** 🆕
+- [x] **Multi-transport architecture with abstraction layer** 🆕
+- [x] Multi-server MCP support (filesystem, PostgreSQL, remote HTTP servers)
 - [x] Azure OpenAI GPT-4o integration
 - [x] LangGraph Functional API with @entrypoint/@task
 - [x] PostgreSQL conversation persistence
@@ -283,16 +318,16 @@ universal-mcp-client/
 - [x] React + TypeScript frontend
 - [x] Docker Compose deployment
 - [x] Database migrations with Alembic
-- [x] 15 MCP tools available (filesystem + SQL operations)
+- [x] 15+ MCP tools available (filesystem, SQL operations, remote APIs)
 
-### 🚧 Phase 3: Advanced Features (Next)
+### 🚧 Phase 3B-E: Advanced Features (In Progress/Next)
 
 - [ ] Enhanced frontend UI/UX
 - [ ] Streaming responses with real-time tool execution display
 - [ ] Multi-session management
 - [ ] Tool execution approval flow (human-in-the-loop)
-- [ ] Additional MCP transports (SSE, HTTP)
-- [ ] Server management UI
+- [ ] Server management UI (dynamic add/remove servers)
+- [ ] Database-backed server configuration
 - [ ] Observability and debugging tools
 - [ ] Authentication & authorization
 - [ ] Rate limiting and usage tracking

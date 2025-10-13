@@ -30,7 +30,14 @@
         "run",
         "weather.py"],
       "enabled": false
+    },
+    {
+      "name": "exa-code",
+      "description": "fast, efficient web context for coding agents",
+      "transport": "http",
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": {},
+      "enabled": true
     }
-    
   ]
 }

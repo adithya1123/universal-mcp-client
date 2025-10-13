@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y \
 # Install uv for package management
 RUN pip install uv
 
+# Copy env
+COPY .env.example .env
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
