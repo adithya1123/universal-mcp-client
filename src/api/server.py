@@ -28,6 +28,135 @@ db_manager: Optional[DatabaseManager] = None
 active_connections: List[WebSocket] = []
 
 
+def read_config_file():
+    """Read MCP servers configuration from JSON file."""
+    from pathlib import Path
+    config_path = Path("config/mcp_servers.json")
+    with open(config_path, "r") as f:
+        return json.load(f)
+
+
+def write_config_file(config):
+    """Write MCP servers configuration to JSON file."""
+    from pathlib import Path
+    config_path = Path("config/mcp_servers.json")
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")  # Add trailing newline
+
+
+async def sync_config_to_json(server, operation="create"):
+    """Sync server changes to mcp_servers.json file.
+
+    Args:
+        server: MCPServer database model instance
+        operation: "create", "update", or "delete"
+    """
+    try:
+        config = read_config_file()
+        servers = config.get("servers", [])
+
+        if operation == "delete":
+            # Remove server from config
+            servers = [s for s in servers if s.get("name") != server.name]
+            logger.info(f"Removed '{server.name}' from config file")
+        else:
+            # Convert database model to config format
+            server_config = {
+                "name": server.name,
+                "description": server.description,
+                "transport": server.transport_type,
+                "command": server.command,
+                "args": server.args,
+                "env": server.env,
+                "url": server.url,
+                "enabled": server.enabled
+            }
+
+            # Remove empty/None fields for cleaner JSON
+            server_config = {k: v for k, v in server_config.items() if v is not None and v != ""}
+
+            if operation == "create":
+                # Add new server
+                servers.append(server_config)
+                logger.info(f"Added '{server.name}' to config file")
+            elif operation == "update":
+                # Update existing server
+                servers = [server_config if s.get("name") == server.name else s for s in servers]
+                logger.info(f"Updated '{server.name}' in config file")
+
+        config["servers"] = servers
+        write_config_file(config)
+
+    except Exception as e:
+        logger.error(f"Failed to sync config file: {e}", exc_info=True)
+        raise
+
+
+async def sync_mcp_servers_from_config():
+    """Sync MCP servers from config/mcp_servers.json to database."""
+    if not db_manager:
+        logger.warning("Database not initialized, skipping server sync")
+        return
+
+    try:
+        from pathlib import Path
+
+        config_path = Path("config/mcp_servers.json")
+        if not config_path.exists():
+            logger.warning(f"MCP servers config not found at {config_path}")
+            return
+
+        config = read_config_file()
+        servers = config.get("servers", [])
+        logger.info(f"Syncing {len(servers)} servers from config to database...")
+
+        synced_count = 0
+        for server_config in servers:
+            name = server_config.get("name")
+            if not name:
+                continue
+
+            # Check if server already exists
+            existing = await db_manager.get_mcp_servers(enabled_only=False)
+            existing_names = {s.name for s in existing}
+
+            if name in existing_names:
+                logger.debug(f"Server '{name}' already exists, skipping")
+                continue
+
+            # Map transport type
+            transport = server_config.get("transport", "stdio")
+            if transport == "stdio":
+                transport_type = "stdio"
+            elif transport in ["http", "sse"]:
+                transport_type = "http"
+            else:
+                transport_type = transport
+
+            # Create server in database
+            await db_manager.create_mcp_server(
+                name=name,
+                description=server_config.get("description"),
+                command=server_config.get("command", ""),
+                args=server_config.get("args"),
+                env=server_config.get("env"),
+                transport_type=transport_type,
+                url=server_config.get("url"),
+                enabled=server_config.get("enabled", True)
+            )
+            logger.info(f"✅ Added server '{name}' to database")
+            synced_count += 1
+
+        if synced_count > 0:
+            logger.info(f"✅ Server sync complete: {synced_count} new server(s) added")
+        else:
+            logger.info("✅ Server sync complete: all servers already in database")
+
+    except Exception as e:
+        logger.error(f"Failed to sync servers from config: {e}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for the FastAPI app with proper checkpointer management."""
@@ -42,6 +171,9 @@ async def lifespan(app: FastAPI):
         db_manager = get_db_manager()
         await init_database()
         logger.info("✅ Database initialized")
+
+        # Sync MCP servers from config to database
+        await sync_mcp_servers_from_config()
 
         # Initialize MCP client and connect to servers
         logger.info("Loading MCP servers...")
@@ -455,6 +587,178 @@ async def approve_or_reject_tools(request_id: str, decision: ApprovalDecision):
             }
     except Exception as e:
         logger.error(f"Approval decision error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# MCP Server Management Endpoints
+class MCPServerCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    command: Optional[str] = ""  # Optional - only needed for stdio transport
+    args: Optional[List[str]] = None
+    env: Optional[dict] = None
+    transport_type: str = "stdio"  # stdio, http, sse
+    url: Optional[str] = None
+    enabled: bool = True
+
+
+class MCPServerUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    command: Optional[str] = None
+    args: Optional[List[str]] = None
+    env: Optional[dict] = None
+    transport_type: Optional[str] = None
+    url: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+@app.get("/mcp-servers")
+async def list_mcp_servers(enabled_only: bool = False):
+    """Get all MCP server configurations."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        servers = await db_manager.get_mcp_servers(enabled_only=enabled_only)
+        return {
+            "servers": [server.to_dict() for server in servers],
+            "count": len(servers)
+        }
+    except Exception as e:
+        logger.error(f"List MCP servers error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/mcp-servers/{server_id}")
+async def get_mcp_server(server_id: str):
+    """Get a specific MCP server configuration."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        server = await db_manager.get_mcp_server(server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail="MCP server not found")
+
+        return server.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get MCP server error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/mcp-servers")
+async def create_mcp_server(server_data: MCPServerCreate):
+    """Create a new MCP server configuration."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        # Create server in database
+        server = await db_manager.create_mcp_server(
+            name=server_data.name,
+            description=server_data.description,
+            command=server_data.command,
+            args=server_data.args,
+            env=server_data.env,
+            transport_type=server_data.transport_type,
+            url=server_data.url,
+            enabled=server_data.enabled
+        )
+
+        # Sync to config file
+        await sync_config_to_json(server, operation="create")
+
+        logger.info(f"✅ Created MCP server: {server.name} (restart required to load)")
+
+        return server.to_dict()
+    except Exception as e:
+        logger.error(f"Create MCP server error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/mcp-servers/{server_id}")
+async def update_mcp_server(server_id: str, server_data: MCPServerUpdate):
+    """Update an MCP server configuration."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        update_data = server_data.dict(exclude_unset=True)
+        server = await db_manager.update_mcp_server(server_id, **update_data)
+
+        if not server:
+            raise HTTPException(status_code=404, detail="MCP server not found")
+
+        # Sync to config file
+        await sync_config_to_json(server, operation="update")
+
+        logger.info(f"✅ Updated MCP server: {server.name} (restart required to apply changes)")
+
+        return server.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update MCP server error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/mcp-servers/{server_id}")
+async def delete_mcp_server(server_id: str):
+    """Delete an MCP server configuration."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        # Get server details before deleting (needed for config sync)
+        server = await db_manager.get_mcp_server(server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail="MCP server not found")
+
+        # Delete from database
+        success = await db_manager.delete_mcp_server(server_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="MCP server not found")
+
+        # Sync to config file
+        await sync_config_to_json(server, operation="delete")
+
+        logger.info(f"✅ Deleted MCP server: {server.name} (restart required to remove)")
+
+        return {"message": "MCP server deleted successfully", "server_id": server_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete MCP server error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/mcp-servers/{server_id}/test")
+async def test_mcp_server_connection(server_id: str):
+    """Test connection to an MCP server."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        server = await db_manager.get_mcp_server(server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail="MCP server not found")
+
+        # TODO: Implement actual connection test
+        # For now, just update health status to indicate we tried
+        await db_manager.update_server_health(server_id, "unknown")
+
+        return {
+            "message": "Connection test not yet implemented",
+            "server_id": server_id,
+            "status": "unknown"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Test MCP server error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

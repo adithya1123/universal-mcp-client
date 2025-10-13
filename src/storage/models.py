@@ -88,7 +88,8 @@ class MCPServer(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), unique=True, nullable=False)
-    command = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)  # server description
+    command = Column(String(255), nullable=True)  # Optional - only needed for stdio transport
     args = Column(JSON, nullable=True)  # Command arguments as list
     env = Column(JSON, nullable=True)  # Environment variables
     transport_type = Column(String(50), default="stdio", nullable=False)  # stdio, sse, http
@@ -104,6 +105,7 @@ class MCPServer(Base):
         return {
             "id": str(self.id),
             "name": self.name,
+            "description": self.description,
             "command": self.command,
             "args": self.args,
             "env": self.env,

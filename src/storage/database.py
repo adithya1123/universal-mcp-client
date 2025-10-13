@@ -312,7 +312,8 @@ class DatabaseManager:
     async def create_mcp_server(
         self,
         name: str,
-        command: str,
+        command: Optional[str] = None,
+        description: Optional[str] = None,
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
         transport_type: str = "stdio",
@@ -324,7 +325,8 @@ class DatabaseManager:
 
         Args:
             name: Server name
-            command: Server command
+            command: Server command (optional, only needed for stdio transport)
+            description: Optional server description
             args: Command arguments
             env: Environment variables
             transport_type: Transport type (stdio, sse, http)
@@ -337,6 +339,7 @@ class DatabaseManager:
         async with self.session() as session:
             server = MCPServer(
                 name=name,
+                description=description,
                 command=command,
                 args=args,
                 env=env,

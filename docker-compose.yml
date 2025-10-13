@@ -43,7 +43,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./config:/app/config:ro
+      - ./config:/app/config
       - /tmp:/tmp  # For MCP filesystem server access
     depends_on:
       postgres:
