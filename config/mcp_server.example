@@ -1,0 +1,20 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "description": "Local filesystem access MCP server",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory"],
+      "enabled": true
+    },
+    {
+      "name": "exa-code",
+      "description": "fast, efficient web context for AI coding agents",
+      "transport": "http",
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": {},
+      "enabled": true
+    }
+  ]
+}
