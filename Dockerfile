@@ -1,9 +1,6 @@
 # Backend Dockerfile for Universal MCP Client
 FROM python:3.13-slim
 
-# Create a non-root user and set it as the running user
-RUN groupadd -r myappgroup && useradd --no-log-init -r -g myappgroup myappuser
-
 # Set working directory
 WORKDIR /app
 
@@ -26,11 +23,18 @@ COPY .env.local .env
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Install Python dependencies
+# Install Python dependencies as root
 RUN uv sync --frozen
 
 # Copy application code
 COPY . .
+
+# Create a non-root user with home directory and set proper ownership
+RUN groupadd -r myappgroup && \
+    useradd --no-log-init -r -g myappgroup -m -d /home/myappuser myappuser && \
+    chown -R myappuser:myappgroup /app && \
+    mkdir -p /home/myappuser/.cache && \
+    chown -R myappuser:myappgroup /home/myappuser
 
 # Expose port
 EXPOSE 8000
