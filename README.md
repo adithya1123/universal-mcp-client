@@ -39,6 +39,37 @@ A production-ready web-based AI chat assistant that acts as a universal MCP (Mod
 └────────┘  └────────┘  └──────────┘  └──────────┘
 ```
 
+---
+
+### 🏗️ Architecture Overview 🎯 Phase 3: Multi-Transport Foundation COMPLETED
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  FastAPI Backend                         │
+│  ┌────────────────────────────────────────────────┐    │
+│  │         Enhanced MCPClient                      │    │
+│  │  ┌──────────────┬──────────────┬────────────┐ │    │
+│  │  │   Factory    │   STDIO      │ Streamable │ │    │
+│  │  │              │   Transport  │    HTTP    │ │    │
+│  │  └──────────────┴──────────────┴────────────┘ │    │
+│  └────────────────────────────────────────────────┘    │
+│           ↓                ↓                ↓           │
+│    ┌──────────┐    ┌──────────┐    ┌──────────┐       │
+│    │ Local FS │    │PostgreSQL│    │ Remote   │       │
+│    │  Server  │    │  Server  │    │HTTP Srvr │       │
+│    └──────────┘    └──────────┘    └──────────┘       │
+└─────────────────────────────────────────────────────────┘
+                      ↕ WebSocket/REST
+┌─────────────────────────────────────────────────────────┐
+│                  React Frontend                          │
+│  - Server Management UI                                  │
+│  - Multi-Session Management                              │
+│  - Real-time Tool Execution Display                      │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Tech Stack
 
 **Backend:**
