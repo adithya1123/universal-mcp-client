@@ -32,8 +32,8 @@
       "enabled": false
     },
     {
-      "name": "exa",
-      "description": "Exa AI search MCP server",
+      "name": "exa-code",
+      "description": "fast, efficient web context for coding agents",
       "transport": "http",
       "url": "https://mcp.exa.ai/mcp",
       "headers": {},
