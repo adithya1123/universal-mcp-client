@@ -3,6 +3,9 @@
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
+# Create a non-root user and set it as the running user
+RUN groupadd -r myappgroup && useradd --no-log-init -r -g myappgroup myappuser
+
 WORKDIR /app
 
 # Copy package files
@@ -32,6 +35,9 @@ EXPOSE 80
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --quiet --tries=1 --spider http://localhost:80 || exit 1
+
+# Switch to non-root user
+USER myappuser
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
