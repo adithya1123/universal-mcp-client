@@ -15,6 +15,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from src.mcp.client import MCPClient
 from src.llm.azure_openai import AzureOpenAIClient
 from src.orchestration import agent as agent_module
+from src.orchestration.approval import get_approval_manager
 from src.storage.database import DatabaseManager, get_db_manager, init_database
 
 logging.basicConfig(level=logging.INFO)
@@ -277,6 +278,183 @@ async def get_history(session_id: str):
         }
     except Exception as e:
         logger.error(f"Get history error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Session Management Endpoints
+@app.get("/sessions")
+async def list_sessions():
+    """Get all chat sessions."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        sessions = await db_manager.get_sessions()
+        return {
+            "sessions": [session.to_dict() for session in sessions],
+            "count": len(sessions)
+        }
+    except Exception as e:
+        logger.error(f"Get sessions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/sessions/{session_id}")
+async def get_session_info(session_id: str):
+    """Get session information."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        session = await db_manager.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return session.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get session error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SessionCreate(BaseModel):
+    session_id: str
+    title: str = "New Conversation"
+    description: Optional[str] = None
+
+
+@app.post("/sessions")
+async def create_new_session(session_data: SessionCreate):
+    """Create a new chat session."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        # Check if session already exists
+        existing = await db_manager.get_session(session_data.session_id)
+        if existing:
+            raise HTTPException(status_code=400, detail="Session already exists")
+
+        session = await db_manager.create_session(
+            session_id=session_data.session_id,
+            title=session_data.title,
+            description=session_data.description
+        )
+        return session.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create session error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SessionUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
+@app.put("/sessions/{session_id}")
+async def update_session_info(session_id: str, session_data: SessionUpdate):
+    """Update session metadata."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        update_data = session_data.dict(exclude_unset=True)
+        session = await db_manager.update_session(session_id, **update_data)
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return session.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update session error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session_endpoint(session_id: str):
+    """Delete a session and all its messages."""
+    if not db_manager:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+
+    try:
+        success = await db_manager.delete_session(session_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return {"message": "Session deleted successfully", "session_id": session_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete session error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Tool Execution Approval Endpoints
+class ApprovalDecision(BaseModel):
+    approved: bool
+    tool_ids: Optional[List[str]] = None  # None means all tools
+    reason: Optional[str] = None
+
+
+@app.get("/approvals/pending")
+async def list_pending_approvals(session_id: Optional[str] = None):
+    """Get all pending approval requests, optionally filtered by session."""
+    approval_manager = get_approval_manager()
+    requests = approval_manager.get_pending_requests(session_id=session_id)
+
+    return {
+        "pending_requests": [req.to_dict() for req in requests],
+        "count": len(requests)
+    }
+
+
+@app.get("/approvals/{request_id}")
+async def get_approval_request(request_id: str):
+    """Get a specific approval request."""
+    approval_manager = get_approval_manager()
+    request = approval_manager.get_request(request_id)
+
+    if not request:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+
+    return request.to_dict()
+
+
+@app.post("/approvals/{request_id}")
+async def approve_or_reject_tools(request_id: str, decision: ApprovalDecision):
+    """Approve or reject tool execution."""
+    approval_manager = get_approval_manager()
+    request = approval_manager.get_request(request_id)
+
+    if not request:
+        raise HTTPException(status_code=404, detail="Approval request not found")
+
+    if request.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request is no longer pending (status: {request.status})")
+
+    try:
+        if decision.approved:
+            request.approve(tool_ids=decision.tool_ids)
+            return {
+                "message": "Tool execution approved",
+                "request_id": request_id,
+                "approved_tools": request.approved_tools
+            }
+        else:
+            request.reject(tool_ids=decision.tool_ids, reason=decision.reason)
+            return {
+                "message": "Tool execution rejected",
+                "request_id": request_id,
+                "rejected_tools": request.rejected_tools,
+                "reason": decision.reason
+            }
+    except Exception as e:
+        logger.error(f"Approval decision error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

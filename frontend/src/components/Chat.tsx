@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import SessionSelector from './SessionSelector'
+import ApprovalModal from './ApprovalModal'
 import './Chat.css'
 
 interface Message {
@@ -17,7 +19,20 @@ interface ToolExecution {
   error?: string
 }
 
+interface PendingApproval {
+  requestId: string
+  toolCalls: Array<{
+    id: string
+    name: string
+    arguments: string
+    parsed_arguments: Record<string, any>
+  }>
+}
+
 function Chat() {
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    return localStorage.getItem('currentSessionId') || 'default'
+  })
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
@@ -25,6 +40,7 @@ function Chat() {
   const [currentStreamingMessage, setCurrentStreamingMessage] = useState<string>('')
   const [currentToolExecutions, setCurrentToolExecutions] = useState<ToolExecution[]>([])
   const [statusMessage, setStatusMessage] = useState<string>('')
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -45,6 +61,45 @@ function Chat() {
       })
       .catch(err => console.error('Failed to fetch tools:', err))
   }, [])
+
+  // Load conversation history when session changes
+  useEffect(() => {
+    const loadConversationHistory = async () => {
+      try {
+        const response = await fetch(`http://localhost:8000/chat/history/${currentSessionId}`)
+        if (response.ok) {
+          const data = await response.json()
+          // Convert API messages to UI format
+          const uiMessages: Message[] = data.messages
+            .filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
+            .map((msg: any) => ({
+              role: msg.role,
+              content: msg.content || ''
+            }))
+          setMessages(uiMessages)
+        }
+      } catch (err) {
+        console.error('Failed to load conversation history:', err)
+      }
+    }
+
+    loadConversationHistory()
+    localStorage.setItem('currentSessionId', currentSessionId)
+  }, [currentSessionId])
+
+  const handleSessionChange = (newSessionId: string) => {
+    setCurrentSessionId(newSessionId)
+    setMessages([])
+    setInput('')
+    setCurrentStreamingMessage('')
+    setCurrentToolExecutions([])
+    setStatusMessage('')
+  }
+
+  const handleSessionCreate = async (sessionId: string, title: string) => {
+    // Optionally, you can show a notification or perform additional actions
+    console.log(`New session created: ${title} (${sessionId})`)
+  }
 
   const sendMessage = async () => {
     if (!input.trim() || isProcessing) {
@@ -71,7 +126,7 @@ function Chat() {
         },
         body: JSON.stringify({
           message: input,
-          session_id: 'default'
+          session_id: currentSessionId
         })
       })
 
@@ -132,6 +187,46 @@ function Chat() {
     }
   }
 
+  const handleApprove = async (toolIds?: string[]) => {
+    if (!pendingApproval) return
+
+    try {
+      await fetch(`http://localhost:8000/approvals/${pendingApproval.requestId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approved: true,
+          tool_ids: toolIds
+        })
+      })
+      setPendingApproval(null)
+      setStatusMessage('Approval granted, executing tools...')
+    } catch (error) {
+      console.error('Approval error:', error)
+      setStatusMessage('Failed to send approval')
+    }
+  }
+
+  const handleReject = async (reason?: string) => {
+    if (!pendingApproval) return
+
+    try {
+      await fetch(`http://localhost:8000/approvals/${pendingApproval.requestId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approved: false,
+          reason
+        })
+      })
+      setPendingApproval(null)
+      setStatusMessage('Tool execution rejected')
+    } catch (error) {
+      console.error('Rejection error:', error)
+      setStatusMessage('Failed to send rejection')
+    }
+  }
+
   const handleStreamEvent = (event: any) => {
     console.log('Stream event:', event)
 
@@ -142,6 +237,24 @@ function Chat() {
 
       case 'llm_response':
         setCurrentStreamingMessage(event.data.content)
+        break
+
+      case 'tool_approval_required':
+        setPendingApproval({
+          requestId: event.data.request_id,
+          toolCalls: event.data.tool_calls
+        })
+        setStatusMessage('⏸️ Waiting for tool execution approval...')
+        break
+
+      case 'tool_approval_granted':
+        setPendingApproval(null)
+        setStatusMessage('✓ Approval granted, executing tools...')
+        break
+
+      case 'tool_approval_rejected':
+        setPendingApproval(null)
+        setStatusMessage('✗ Tool execution rejected')
         break
 
       case 'tool_start':
@@ -205,7 +318,21 @@ function Chat() {
 
   return (
     <div className="chat-container">
+      {pendingApproval && (
+        <ApprovalModal
+          requestId={pendingApproval.requestId}
+          toolCalls={pendingApproval.toolCalls}
+          onApprove={handleApprove}
+          onReject={handleReject}
+        />
+      )}
+
       <div className="chat-status">
+        <SessionSelector
+          currentSessionId={currentSessionId}
+          onSessionChange={handleSessionChange}
+          onSessionCreate={handleSessionCreate}
+        />
         <div className="status-indicator">
           <span className="status-dot connected"></span>
           <span>Ready</span>

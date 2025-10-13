@@ -12,6 +12,36 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 
+class Session(Base):
+    """
+    Store chat session metadata for multi-session management.
+    Each session represents an independent conversation context.
+    """
+    __tablename__ = "sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(String(255), unique=True, index=True, nullable=False)
+    title = Column(String(255), nullable=False, default="New Conversation")
+    description = Column(Text, nullable=True)
+    message_count = Column(String(50), default="0", nullable=False)  # Total messages in this session
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    last_message_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary format."""
+        return {
+            "id": str(self.id),
+            "session_id": self.session_id,
+            "title": self.title,
+            "description": self.description,
+            "message_count": self.message_count,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "last_message_at": self.last_message_at.isoformat() if self.last_message_at else None,
+        }
+
+
 class ConversationMessage(Base):
     """
     Store conversation history for context management.

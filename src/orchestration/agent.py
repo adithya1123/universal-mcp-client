@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import uuid
 from typing import Any, Dict, List, Optional, AsyncGenerator
 
 from langgraph.func import entrypoint, task
@@ -12,6 +13,7 @@ from src.llm.azure_openai import AzureOpenAIClient
 from src.mcp.client import MCPClient
 from src.storage.database import DatabaseManager
 from .state import ChatState
+from .approval import get_approval_manager
 
 logger = logging.getLogger(__name__)
 
@@ -613,10 +615,83 @@ async def chat_agent_stream(
                 }
                 return
 
-            # Execute tools
+            # Execute tools (with approval flow if enabled)
             state["tool_calls_made"] = tool_calls
 
+            # Check if approval is required (via environment variable)
+            require_approval = os.getenv("REQUIRE_TOOL_APPROVAL", "false").lower() == "true"
+
+            if require_approval:
+                # Create approval request
+                approval_manager = get_approval_manager()
+                request_id = str(uuid.uuid4())
+
+                # Format tool calls for approval UI
+                formatted_tool_calls = [
+                    {
+                        "id": tc["id"],
+                        "name": tc["name"],
+                        "arguments": tc["arguments"],
+                        "parsed_arguments": json.loads(tc["arguments"]) if tc["arguments"] else {}
+                    }
+                    for tc in tool_calls
+                ]
+
+                approval_request = approval_manager.create_request(
+                    request_id=request_id,
+                    session_id=session_id,
+                    tool_calls=formatted_tool_calls
+                )
+
+                # Yield approval required event
+                yield {
+                    "type": "tool_approval_required",
+                    "data": {
+                        "request_id": request_id,
+                        "tool_calls": formatted_tool_calls
+                    }
+                }
+
+                # Wait for user decision (with timeout)
+                decision = await approval_request.wait_for_decision(timeout=300)
+
+                if decision == "timeout":
+                    yield {
+                        "type": "error",
+                        "data": "Tool execution approval timed out. Please try again."
+                    }
+                    approval_manager.remove_request(request_id)
+                    return
+                elif decision == "rejected":
+                    yield {
+                        "type": "tool_approval_rejected",
+                        "data": {"message": "Tool execution was rejected by user"}
+                    }
+                    approval_manager.remove_request(request_id)
+                    # Return without executing tools
+                    yield {
+                        "type": "complete",
+                        "data": {
+                            "response": "Tool execution was cancelled.",
+                            "conversation_history": state["conversation_history"]
+                        }
+                    }
+                    return
+
+                # Approval granted - check which tools were approved
+                yield {
+                    "type": "tool_approval_granted",
+                    "data": {"approved_tools": approval_request.approved_tools}
+                }
+
+            # Execute approved tools
             for tool_call in tool_calls:
+                # Skip if approval was required but this tool wasn't approved
+                if require_approval:
+                    if not approval_request.is_tool_approved(tool_call["id"]):
+                        logger.info(f"Skipping tool {tool_call['name']} - not approved")
+                        continue
+
                 yield {
                     "type": "tool_start",
                     "data": {
@@ -667,6 +742,10 @@ async def chat_agent_stream(
                             "error": str(e)
                         }
                     }
+
+            # Clean up approval request if it exists
+            if require_approval:
+                approval_manager.remove_request(request_id)
 
             # Clear tool calls after execution
             state["tool_calls_made"] = []
