@@ -36,15 +36,15 @@ RUN groupadd -r myappgroup && \
     mkdir -p /home/myappuser/.cache && \
     chown -R myappuser:myappgroup /home/myappuser
 
-# Expose port
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Expose port (will be set by environment variable)
+ARG PORT=9000
+EXPOSE ${PORT}
 
 # Switch to non-root user
 USER myappuser
 
-# Run the application
-CMD ["uv", "run", "uvicorn", "src.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Set default port
+ENV PORT=${PORT}
+
+# Run the application (port set via environment variable)
+CMD uv run uvicorn src.api.server:app --host 0.0.0.0 --port ${PORT}

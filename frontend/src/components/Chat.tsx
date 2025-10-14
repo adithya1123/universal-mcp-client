@@ -54,7 +54,7 @@ function Chat() {
 
   useEffect(() => {
     // Fetch tool count on mount
-    fetch('http://localhost:8000/health')
+    fetch('http://localhost:9000/health')
       .then(res => res.json())
       .then(data => {
         setToolCount(data.available_tools || 0)
@@ -66,7 +66,7 @@ function Chat() {
   useEffect(() => {
     const loadConversationHistory = async () => {
       try {
-        const response = await fetch(`http://localhost:8000/chat/history/${currentSessionId}`)
+        const response = await fetch(`http://localhost:9000/chat/history/${currentSessionId}`)
         if (response.ok) {
           const data = await response.json()
           // Convert API messages to UI format
@@ -119,7 +119,7 @@ function Chat() {
     setStatusMessage('Connecting...')
 
     try {
-      const response = await fetch('http://localhost:8000/chat/stream', {
+      const response = await fetch('http://localhost:9000/chat/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -191,7 +191,7 @@ function Chat() {
     if (!pendingApproval) return
 
     try {
-      await fetch(`http://localhost:8000/approvals/${pendingApproval.requestId}`, {
+      await fetch(`http://localhost:9000/approvals/${pendingApproval.requestId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -211,7 +211,7 @@ function Chat() {
     if (!pendingApproval) return
 
     try {
-      await fetch(`http://localhost:8000/approvals/${pendingApproval.requestId}`, {
+      await fetch(`http://localhost:9000/approvals/${pendingApproval.requestId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

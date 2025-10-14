@@ -36,7 +36,7 @@ function SessionSelector({ currentSessionId, onSessionChange, onSessionCreate }:
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch('http://localhost:8000/sessions')
+      const response = await fetch('http://localhost:9000/sessions')
       if (!response.ok) throw new Error('Failed to load sessions')
       const data = await response.json()
       setSessions(data.sessions)
@@ -53,7 +53,7 @@ function SessionSelector({ currentSessionId, onSessionChange, onSessionCreate }:
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
     try {
-      const response = await fetch('http://localhost:8000/sessions', {
+      const response = await fetch('http://localhost:9000/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -83,7 +83,7 @@ function SessionSelector({ currentSessionId, onSessionChange, onSessionCreate }:
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/sessions/${sessionId}`, {
+      const response = await fetch(`http://localhost:9000/sessions/${sessionId}`, {
         method: 'DELETE'
       })
 

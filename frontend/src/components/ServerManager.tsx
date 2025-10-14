@@ -46,7 +46,7 @@ function ServerManager({ onClose }: ServerManagerProps) {
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch('http://localhost:8000/mcp-servers')
+      const response = await fetch('http://localhost:9000/mcp-servers')
       if (!response.ok) throw new Error('Failed to load servers')
       const data = await response.json()
       setServers(data.servers)
@@ -106,7 +106,7 @@ function ServerManager({ onClose }: ServerManagerProps) {
 
       if (editingServer) {
         // Update existing server
-        const response = await fetch(`http://localhost:8000/mcp-servers/${editingServer.id}`, {
+        const response = await fetch(`http://localhost:9000/mcp-servers/${editingServer.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -114,7 +114,7 @@ function ServerManager({ onClose }: ServerManagerProps) {
         if (!response.ok) throw new Error('Failed to update server')
       } else {
         // Create new server
-        const response = await fetch('http://localhost:8000/mcp-servers', {
+        const response = await fetch('http://localhost:9000/mcp-servers', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -135,7 +135,7 @@ function ServerManager({ onClose }: ServerManagerProps) {
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/mcp-servers/${serverId}`, {
+      const response = await fetch(`http://localhost:9000/mcp-servers/${serverId}`, {
         method: 'DELETE'
       })
       if (!response.ok) throw new Error('Failed to delete server')
@@ -147,7 +147,7 @@ function ServerManager({ onClose }: ServerManagerProps) {
 
   const handleTest = async (serverId: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/mcp-servers/${serverId}/test`, {
+      const response = await fetch(`http://localhost:9000/mcp-servers/${serverId}/test`, {
         method: 'POST'
       })
       if (!response.ok) throw new Error('Failed to test server')

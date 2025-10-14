@@ -23,7 +23,7 @@ A production-ready web-based AI chat assistant that acts as a universal MCP (Mod
                        │ WebSocket / REST
 ┌──────────────────────▼──────────────────────────────┐
 │              Backend (FastAPI)                       │
-│              http://localhost:8000                   │
+│              http://localhost:9000                   │
 │  ┌────────────────────────────────────────────┐    │
 │  │  LangGraph Agent (Functional API)          │    │
 │  │  - @entrypoint with checkpointing          │    │
@@ -121,7 +121,14 @@ AZURE_OPENAI_API_VERSION=2025-01-01-preview
 
 # Database (Docker default - change credentials in docker-compose.yml)
 DATABASE_URL=postgresql+asyncpg://db_user:db_password@postgres:5432/mcp_chat
+
+# Port Configuration (Optional - change if needed)
+POSTGRES_PORT=5432
+BACKEND_PORT=9000
+FRONTEND_PORT=5173
 ```
+
+**Note on Ports**: All service ports are now configurable via environment variables. Simply change the values in `.env` and restart Docker Compose - no code changes needed!
 
 ### 2. Start All Services
 
@@ -130,16 +137,18 @@ docker-compose up -d
 ```
 
 This starts:
-- **PostgreSQL** on port 5432
-- **Backend** on port 8000
-- **Frontend** on port 5173
+- **PostgreSQL** on port 5432 (configurable via `POSTGRES_PORT`)
+- **Backend** on port 9000 (configurable via `BACKEND_PORT`)
+- **Frontend** on port 5173 (configurable via `FRONTEND_PORT`)
+
+All ports can be changed in `.env` without modifying any code!
 
 ### 3. Access the Application
 
 - **Frontend UI**: http://localhost:5173
-- **Backend API**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health
+- **Backend API**: http://localhost:9000
+- **API Documentation**: http://localhost:9000/docs
+- **Health Check**: http://localhost:9000/health
 
 ### 4. Verify Status
 
@@ -152,7 +161,7 @@ docker-compose logs backend
 docker-compose logs frontend
 
 # Check MCP servers and tools
-curl http://localhost:8000/health
+curl http://localhost:9000/health
 ```
 
 ## Local Development Setup
@@ -190,7 +199,7 @@ uv run alembic upgrade head
 # Start backend
 ./run_backend.sh
 # OR
-PYTHONPATH=. uv run uvicorn src.api.server:app --reload --host 0.0.0.0 --port 8000
+PYTHONPATH=. uv run uvicorn src.api.server:app --reload --host 0.0.0.0 --port 9000
 ```
 
 ### 3. Frontend Setup
@@ -450,10 +459,29 @@ DATABASE_URL=postgresql+asyncpg://db_user:db_password@localhost:5432/mcp_chat
 
 ### Frontend Can't Connect to Backend
 
-1. Check backend is running on port 8000
+1. Check backend is running on configured port (default 9000, set by `BACKEND_PORT`)
 2. Verify CORS settings in `src/api/server.py`
 3. Check browser console for errors
 4. Ensure WebSocket connection is established
+
+### Port Conflicts
+
+If you encounter "port already in use" errors:
+
+1. Edit `.env` and change the conflicting port:
+   ```bash
+   POSTGRES_PORT=5433    # If 5432 is in use
+   BACKEND_PORT=8080     # If 9000 is in use
+   FRONTEND_PORT=3000    # If 5173 is in use
+   ```
+
+2. Restart Docker Compose:
+   ```bash
+   docker-compose down
+   docker-compose up -d --build
+   ```
+
+The system automatically updates all internal references to use your new ports!
 
 ## Documentation
 
