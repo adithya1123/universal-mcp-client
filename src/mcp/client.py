@@ -1,6 +1,7 @@
 """MCP Client implementation for connecting to MCP servers."""
 
 import json
+import re
 from typing import Any, Dict, List
 from pathlib import Path
 
@@ -15,6 +16,28 @@ class MCPClient:
     Supports multiple transport types (STDIO, HTTP) through a unified
     transport abstraction layer.
     """
+
+    @staticmethod
+    def _sanitize_tool_name(name: str) -> str:
+        """Sanitize tool names for Azure OpenAI compatibility.
+
+        Azure OpenAI requires tool names to match: ^[a-zA-Z0-9_\.-]+
+        This function replaces invalid characters with underscores.
+
+        Args:
+            name: Original tool name
+
+        Returns:
+            Sanitized tool name with only valid characters
+        """
+        # Replace spaces and other invalid characters with underscores
+        # Keep only alphanumeric, underscore, dot, and hyphen
+        sanitized = re.sub(r'[^a-zA-Z0-9_.\-]', '_', name)
+        # Collapse multiple consecutive underscores to single underscore
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        return sanitized
 
     def __init__(self, config_path: str = "config/mcp_servers.json"):
         self.config_path = Path(config_path)
@@ -74,8 +97,11 @@ class MCPClient:
             tools_result = await session.list_tools()
 
             for tool in tools_result.tools:
-                # Use underscore instead of colon for Azure OpenAI compatibility
-                tool_key = f"{server_name}_{tool.name}"
+                # Sanitize server name and tool name for Azure OpenAI compatibility
+                sanitized_server = self._sanitize_tool_name(server_name)
+                sanitized_tool = self._sanitize_tool_name(tool.name)
+                tool_key = f"{sanitized_server}_{sanitized_tool}"
+
                 self.tools[tool_key] = {
                     "server": server_name,
                     "name": tool.name,
