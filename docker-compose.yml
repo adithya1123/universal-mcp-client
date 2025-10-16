@@ -7,8 +7,12 @@ services:
       POSTGRES_DB: mcp_chat
       POSTGRES_USER: mcp_user
       POSTGRES_PASSWORD: mcp_pass
+    command: >
+      postgres
+      -c shared_preload_libraries=''
+      -c log_min_messages=WARNING
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -25,26 +29,30 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - PORT=${BACKEND_PORT:-9000}
     container_name: mcp-backend
     environment:
-      - DATABASE_URL=postgresql+asyncpg://mcp_user:mcp_pass@postgres:5432/mcp_chat
+      - PORT=${BACKEND_PORT:-9000}
+      - DATABASE_URL=postgresql+asyncpg://mcp_user:mcp_pass@postgres:${POSTGRES_PORT:-5432}/mcp_chat
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
       - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME}
       - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION}
-      - ALLOWED_ORIGINS=http://localhost:5173,http://frontend:8080
+      - ALLOWED_ORIGINS=http://localhost:${FRONTEND_PORT:-5173},http://frontend:8080
+      - REQUIRE_TOOL_APPROVAL=${REQUIRE_TOOL_APPROVAL:-false}
       - DEBUG=false
       - LOG_LEVEL=INFO
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-9000}:${BACKEND_PORT:-9000}"
     volumes:
-      - ./config:/app/config:ro
+      - ./config:/app/config
       - /tmp:/tmp  # For MCP filesystem server access
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:$${PORT:-9000}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -59,8 +67,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: mcp-frontend
+    environment:
+      - BACKEND_PORT=${BACKEND_PORT:-9000}
     ports:
-      - "5173:8080"
+      - "${FRONTEND_PORT:-5173}:8080"
     depends_on:
       - backend
     healthcheck:

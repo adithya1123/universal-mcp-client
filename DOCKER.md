@@ -60,10 +60,10 @@ docker compose logs -f postgres
 - **Password:** `mcp_pass`
 - **Data:** Persisted in Docker volume `postgres_data`
 
-### Backend API (port 8000)
+### Backend API (port 9000)
 - **Container:** `mcp-backend`
-- **Health Check:** http://localhost:8000/health
-- **API Docs:** http://localhost:8000/docs
+- **Health Check:** http://localhost:9000/health
+- **API Docs:** http://localhost:9000/docs
 - **Technology:** FastAPI + Python 3.13
 
 ### Frontend (port 5173)
@@ -81,7 +81,7 @@ docker compose logs -f postgres
        │
        ▼
 ┌─────────────┐
-│   Backend   │  Port 8000 (FastAPI)
+│   Backend   │  Port 9000 (FastAPI)
 │   (Python)  │
 └──────┬──────┘
        │
@@ -112,7 +112,7 @@ DATABASE_URL=postgresql+asyncpg://mcp_user:mcp_pass@postgres:5432/mcp_chat
 All services run in an isolated Docker network (`mcp-network`):
 
 - Services can communicate using container names
-- Frontend proxies API requests to `backend:8000`
+- Frontend proxies API requests to `backend:9000`
 - Backend connects to database at `postgres:5432`
 
 ## Volumes
@@ -195,7 +195,7 @@ If ports are already in use, modify `docker-compose.yml`:
 
 ```yaml
 ports:
-  - "8001:8000"  # Use different host port
+  - "9001:9000"  # Use different host port
 ```
 
 ### Clean Rebuild

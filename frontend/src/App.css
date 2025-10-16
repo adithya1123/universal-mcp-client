@@ -2,28 +2,116 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Animated background gradient */
+.App::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background:
+    radial-gradient(circle at 20% 50%, rgba(102, 126, 234, 0.3) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(118, 75, 162, 0.3) 0%, transparent 50%);
+  animation: gradientShift 15s ease infinite;
+  z-index: 0;
+}
+
+@keyframes gradientShift {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
 }
 
 .App-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
   color: white;
-  padding: 2rem;
-  text-align: center;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 1.5rem 2rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  z-index: 1;
+  position: relative;
+  animation: slideDown 0.5s ease-out;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 2rem;
+}
+
+.btn-servers {
+  padding: 0.75rem 1.5rem;
+  background: rgba(255, 255, 255, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: white;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+  white-space: nowrap;
+}
+
+.btn-servers:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(255, 255, 255, 0.2);
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 .App-header h1 {
   margin: 0;
-  font-size: 2rem;
-  font-weight: 600;
+  font-size: 2.2rem;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  display: inline-block;
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
 }
 
 .App-header p {
   margin: 0.5rem 0 0;
-  opacity: 0.9;
-  font-size: 0.95rem;
+  opacity: 0.95;
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: 0.3px;
 }
 
 .App-main {
@@ -31,5 +119,64 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: white;
+  margin: 1.5rem;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  border-radius: 24px;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.15),
+    0 0 0 1px rgba(255, 255, 255, 0.3);
+  z-index: 1;
+  position: relative;
+  animation: scaleIn 0.4s ease-out;
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .App {
+    max-width: 100%;
+  }
+
+  .App-header h1 {
+    font-size: 1.6rem;
+  }
+
+  .App-header p {
+    font-size: 0.9rem;
+  }
+
+  .App-main {
+    margin: 1rem;
+    border-radius: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .App-header {
+    padding: 1rem 1.5rem;
+  }
+
+  .App-header h1 {
+    font-size: 1.4rem;
+  }
+
+  .App-header p {
+    font-size: 0.85rem;
+  }
+
+  .App-main {
+    margin: 0.5rem;
+    border-radius: 12px;
+  }
 }

@@ -12,7 +12,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
 
-from .models import Base, ConversationMessage, MCPServer, LangGraphCheckpoint
+from .models import Base, Session, ConversationMessage, MCPServer, LangGraphCheckpoint
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +155,133 @@ class DatabaseManager:
             )
             return result.rowcount
 
+    # ========== Session Management Operations ==========
+
+    async def get_sessions(self) -> List[Session]:
+        """
+        Get all chat sessions ordered by last activity.
+
+        Returns:
+            List of session objects
+        """
+        async with self.session() as session:
+            result = await session.execute(
+                select(Session).order_by(Session.updated_at.desc())
+            )
+            return result.scalars().all()
+
+    async def get_session(self, session_id: str) -> Optional[Session]:
+        """
+        Get a specific session by session_id.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            Session object or None if not found
+        """
+        async with self.session() as session:
+            result = await session.execute(
+                select(Session).where(Session.session_id == session_id)
+            )
+            return result.scalar_one_or_none()
+
+    async def create_session(
+        self,
+        session_id: str,
+        title: str = "New Conversation",
+        description: Optional[str] = None,
+    ) -> Session:
+        """
+        Create a new chat session.
+
+        Args:
+            session_id: Unique session identifier
+            title: Session title
+            description: Optional session description
+
+        Returns:
+            Created session object
+        """
+        async with self.session() as session:
+            new_session = Session(
+                session_id=session_id,
+                title=title,
+                description=description,
+                message_count="0",
+            )
+            session.add(new_session)
+            await session.flush()
+            await session.refresh(new_session)
+            return new_session
+
+    async def update_session(
+        self,
+        session_id: str,
+        **kwargs,
+    ) -> Optional[Session]:
+        """
+        Update a session's metadata.
+
+        Args:
+            session_id: Session identifier
+            **kwargs: Fields to update (title, description, etc.)
+
+        Returns:
+            Updated session object or None if not found
+        """
+        async with self.session() as session:
+            result = await session.execute(
+                select(Session).where(Session.session_id == session_id)
+            )
+            session_obj = result.scalar_one_or_none()
+            if session_obj:
+                for key, value in kwargs.items():
+                    if hasattr(session_obj, key):
+                        setattr(session_obj, key, value)
+                session_obj.updated_at = datetime.now(timezone.utc)
+                await session.flush()
+                await session.refresh(session_obj)
+            return session_obj
+
+    async def delete_session(self, session_id: str) -> bool:
+        """
+        Delete a session and all its messages.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            True if deleted, False if not found
+        """
+        async with self.session() as session:
+            # Delete all messages first
+            await session.execute(
+                delete(ConversationMessage).where(
+                    ConversationMessage.session_id == session_id
+                )
+            )
+
+            # Delete the session
+            result = await session.execute(
+                delete(Session).where(Session.session_id == session_id)
+            )
+            return result.rowcount > 0
+
+    async def update_session_activity(self, session_id: str, message_count: int):
+        """
+        Update session's last activity time and message count.
+
+        Args:
+            session_id: Session identifier
+            message_count: New message count
+        """
+        await self.update_session(
+            session_id,
+            last_message_at=datetime.now(timezone.utc),
+            message_count=str(message_count),
+        )
+
     # ========== MCP Server Operations ==========
 
     async def get_mcp_servers(self, enabled_only: bool = False) -> List[MCPServer]:
@@ -185,7 +312,8 @@ class DatabaseManager:
     async def create_mcp_server(
         self,
         name: str,
-        command: str,
+        command: Optional[str] = None,
+        description: Optional[str] = None,
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
         transport_type: str = "stdio",
@@ -197,7 +325,8 @@ class DatabaseManager:
 
         Args:
             name: Server name
-            command: Server command
+            command: Server command (optional, only needed for stdio transport)
+            description: Optional server description
             args: Command arguments
             env: Environment variables
             transport_type: Transport type (stdio, sse, http)
@@ -210,6 +339,7 @@ class DatabaseManager:
         async with self.session() as session:
             server = MCPServer(
                 name=name,
+                description=description,
                 command=command,
                 args=args,
                 env=env,
